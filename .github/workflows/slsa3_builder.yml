@@ -20,6 +20,7 @@ permissions:
 env:
   # Project.
   GENERATED_BINARY_NAME: compiled-binary
+  GENERATED_SPDX_NAME: binary.spdx
   # Builder
   BUILDER_BINARY: builder
   BUILDER_CUSTOM_PRED_BINARY: builder-custom-pred
@@ -91,6 +92,7 @@ jobs:
   builder:
     outputs:
       go-builder-sha256: ${{ steps.builder-gen.outputs.go-builder-sha256 }}
+      go-builder-custom-pred-sha256: ${{ steps.builder-custom-pred-gen.outputs.go-builder-custom-pred-sha256 }}
       go-prov-sha256: ${{ steps.builder-gen.outputs.go-prov-sha256 }}
     runs-on: ubuntu-latest
     needs: [detect-env]
@@ -125,7 +127,6 @@ jobs:
         id: builder-gen
         env:
           BUILDER_BINARY: "${{ env.BUILDER_BINARY }}"
-          BUILDER_CUSTOM_PRED_BINARY: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
         run: |
           set -euo pipefail
 
@@ -135,10 +136,18 @@ jobs:
           echo "::set-output name=go-builder-sha256::$BUILDER_DIGEST"
           echo "hash of $BUILDER_BINARY is $BUILDER_DIGEST"
 
+      - name: Build builder for custom preds
+        shell: bash
+        id: builder-custom-pred-gen
+        env:
+          BUILDER_CUSTOM_PRED_BINARY: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
+        run: |
+          set -euo pipefail
+
           # https://go.dev/ref/mod#build-commands.
-          go build -mod=vendor ./cmd/intoto-custom-predicate/. -o "$BUILDER_CUSTOM_PRED_BINARY"
+          go build -mod=vendor -o "$BUILDER_CUSTOM_PRED_BINARY" ./cmd/intoto-custom-predicate/. 
           BUILDER_CUSTOM_PRED_DIGEST=$(sha256sum "$BUILDER_CUSTOM_PRED_BINARY" | awk '{print $1}')
-          echo "::set-output name=go-builder-sha256::$BUILDER_CUSTOM_PRED_DIGEST"
+          echo "::set-output name=go-builder-custom-pred-sha256::$BUILDER_CUSTOM_PRED_DIGEST"
           echo "hash of $BUILDER_CUSTOM_PRED_BINARY is $BUILDER_CUSTOM_PRED_DIGEST"
 
 
@@ -244,6 +253,7 @@ jobs:
   build:
     outputs:
       go-binary-sha256: ${{ steps.build-sha256.outputs.go-binary-sha256 }}
+      sbom-sha256: ${{ steps.sbom-sha256.outputs.sbom-sha256 }}
     runs-on: ubuntu-latest
     needs: [builder]
     steps:
@@ -313,6 +323,56 @@ jobs:
           echo "./$BUILDER_BINARY" build "$CONFIG_FILE" "$UNTRUSTED_ENVS"
           export OUTPUT_BINARY="${{ env.GENERATED_BINARY_NAME }}"
           ./"$BUILDER_BINARY" build "$CONFIG_FILE" "$UNTRUSTED_ENVS"
+
+      # TODO: generate SBOM here , todo make safer
+      - name: create SBOM
+        id: sbom-gen
+        shell: bash
+        env:
+          UNTRUSTED_ENVS: "${{ inputs.evaluated-envs }}"
+          UNTRUSTED_WORKING_DIR: "${{ inputs.working-dir }}"
+        run: |
+          set -euo pipefail
+
+          # Disable set-output command.
+          # echo "::stop-commands::`echo -n ${{ github.token }} | sha256sum | head -c 64`"
+          echo "LS"
+          ls -l
+
+          #echo "vendor list"
+          #cat ./vendor/modules.txt
+
+          #echo "go get"
+          #go get sigs.k8s.io/bom/cmd/bom@main
+
+
+          echo "go install"
+          go install --mod=mod sigs.k8s.io/bom/cmd/bom@main
+          echo "bom gen"
+          bom generate -n "http://www.example.com/${{ env.GENERATED_SPDX_NAME }}" -o "${{ env.GENERATED_SPDX_NAME }}" .
+          echo "::set-output name=sbom-name::${{ env.GENERATED_SPDX_NAME }}"
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@6673cd052c4cd6fcf4b4e6e60ea986c889389535 # v2.3.1
+        with:
+          name: "${{ env.GENERATED_SPDX_NAME }}"
+          path: "${{ env.GENERATED_SPDX_NAME }}"
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Compute sbom hash
+        id: sbom-sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Re-enable set-output command.
+          echo "::`echo -n ${{ github.token }} | sha256sum | head -c 64`::"
+
+          DIGEST=$(sha256sum "${{ env.GENERATED_SPDX_NAME }}" | awk '{print $1}')
+          echo "digest of ${{ env.GENERATED_SPDX_NAME }} is $DIGEST"
+
+          echo "::set-output name=sbom-sha256::$DIGEST"
 
       - name: Compute binary hash
         id: build-sha256
@@ -395,6 +455,7 @@ jobs:
         with:
           name: "${{ env.BUILDER_BINARY }}"
 
+      
       - name: Verify builder
         env:
           BUILDER_HASH: "${{ needs.builder.outputs.go-builder-sha256 }}"
@@ -448,8 +509,9 @@ jobs:
   upload-assets:
     permissions:
       contents: write
+      id-token: write # Needed for keyless.
     runs-on: ubuntu-latest
-    needs: [build,build-dry,provenance]
+    needs: [build,build-dry,provenance,builder]
     if: inputs.upload-assets == true
     steps:
       # Verify binary hash.
@@ -490,9 +552,65 @@ jobs:
           # Compare hashes. Explicit exit to be safe.
           echo "$UNTRUSTED_PROVENANCE_HASH $UNTRUSTED_PROVENANCE_NAME" | sha256sum --strict --check --status || exit -2
 
+      # Download SBOM
+      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+        with:
+          name: ${{ env.GENERATED_SPDX_NAME }}
+
       - name: Release
         uses: softprops/action-gh-release@1e07f4398721186383de40550babbdf2b84acfc5
         with:
           files: |
             ${{ needs.build-dry.outputs.go-binary-name }}
             ${{ needs.provenance.outputs.go-provenance-name }}
+            ${{ env.GENERATED_SPDX_NAME }}
+
+      - name: Download builder custom pred
+        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        with:
+          name: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
+
+
+      - name: Verify builder custom pred
+        env:
+          BUILDER_HASH: "${{ needs.builder.outputs.go-builder-custom-pred-sha256 }}"
+          BUILDER_BINARY: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
+        run: |
+          set -euo pipefail
+
+          echo "hash of builder should be $BUILDER_HASH"
+          COMPUTED_HASH=$(sha256sum "$BUILDER_BINARY" | awk '{print $1}')
+          echo "builder hash computed is $COMPUTED_HASH"
+
+          # Compare hashes. Explicit exit to be safe.
+          # TODO: remove the builder as well.
+          echo "$BUILDER_HASH $BUILDER_BINARY" | sha256sum --strict --check --status || exit -2
+
+          # Make the builder executable.
+          chmod a+x "$BUILDER_BINARY"
+
+      - name: Create and sign custom predicate
+        id: sign-custom-pred
+        shell: bash
+        env:
+          UNTRUSTED_BINARY_NAME: "${{ needs.build-dry.outputs.go-binary-name }}"
+          UNTRUSTED_BINARY_HASH: "${{ needs.build.outputs.go-binary-sha256 }}"
+          UNTRUSTED_COMMAND: "${{ needs.build-dry.outputs.go-command }}"
+          UNTRUSTED_ENV: "${{ needs.build-dry.outputs.go-env }}"
+          BUILDER_BINARY: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
+          GITHUB_CONTEXT: "${{ toJSON(github) }}"
+          SBOM_HASH: "${{ needs.build.outputs.sbom-sha256 }}"
+        run: |
+          set -euo pipefail
+
+          echo "provenance generator is $BUILDER_BINARY"
+          echo "sbom hash is $SBOM_HASH"
+          echo "tag is ${GITHUB_REF#refs/tags/}"
+          echo "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF#refs/tags/}/${{ env.GENERATED_SPDX_NAME }}"
+          echo "${GITHUB_REF#refs/tags/}"
+          # https://github.com/lumjjb/sample-golang-prov/releases/download/v0/binary.spdx
+
+          # Create and sign provenance
+          # This sets signed-provenance-name to the name of the signed DSSE envelope.
+          ./"$BUILDER_BINARY" attest -t "http://lumjjb/sbom-documents" -s "$UNTRUSTED_BINARY_HASH $UNTRUSTED_BINARY_NAME" -u "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF#refs/tags/}/${{ env.GENERATED_SPDX_NAME }}" -d "$SBOM_HASH"
+

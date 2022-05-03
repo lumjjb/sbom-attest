@@ -129,7 +129,10 @@ func GenerateProvenance(name, digest, command, envs string) ([]byte, string, err
 
 	// Sign the provenance.
 	s := sigstore.NewDefaultSigner()
-	att, err := s.Sign(ctx, p)
+	att, err := s.Sign(ctx, &intoto.Statement{
+		StatementHeader: p.StatementHeader,
+		Predicate:       p.Predicate,
+	})
 	if err != nil {
 		return nil, "", err
 	}
