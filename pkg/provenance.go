@@ -149,6 +149,7 @@ func GenerateProvenance(name, digest, command, envs string) ([]byte, string, err
 	logRef := fmt.Sprintf("index:%d, logID:%s", *logEntry.LogIndex, *logEntry.LogID)
 
 	return att.Bytes(), logRef, nil
+
 }
 
 func unmarshallList(arg string) ([]string, error) {
