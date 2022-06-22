@@ -615,4 +615,3 @@ jobs:
           # Create and sign provenance
           # This sets signed-provenance-name to the name of the signed DSSE envelope.
           ./"$BUILDER_BINARY" attest -a "${{ github.server_url }}/${{ github.repository }}" -c "${{ github.sha }}" -x "${{ github.server_url }}/$WORKFLOW_REPO" -y "$WORKFLOW_REF" -t "http://lumjjb/sbom-documents" -s "$UNTRUSTED_BINARY_HASH $UNTRUSTED_BINARY_NAME" -u "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF#refs/tags/}/${{ env.GENERATED_SPDX_NAME }}" -d "$SBOM_HASH"
-          

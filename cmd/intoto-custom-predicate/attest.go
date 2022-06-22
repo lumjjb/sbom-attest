@@ -30,6 +30,7 @@ import (
 	slsav02 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/spf13/cobra"
 
+	"github.com/slsa-framework/slsa-github-generator-go/pkg/signing"
 	"github.com/slsa-framework/slsa-github-generator/github"
 	"github.com/slsa-framework/slsa-github-generator/signing/sigstore"
 )
@@ -110,14 +111,15 @@ func attestCmd() *cobra.Command {
 		artifactRepoCommit       string
 		attestationGenRepo       string
 		attestationGenRepoCommit string
+		local                    bool
 	)
 
 	c := &cobra.Command{
 		Use:   "attest",
-		Short: "Create a signed SLSA attestation from a Github Action",
-		Long: `Generate and sign SLSA provenance from a Github Action to form an attestation
-and upload to a Rekor transparency log. This command assumes that it is being
-run in the context of a Github Actions workflow.`,
+		Short: "Create and upload a signed SLSA attestation",
+		Long: `Generate and sign SLSA provenance to form an attestation and upload to a 
+Rekor transparency log. This command assumes that it is being run in 
+the context of a Github Actions workflow unless the --local flag is provided.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
 			/*
@@ -134,9 +136,6 @@ run in the context of a Github Actions workflow.`,
 
 			ctx := context.Background()
 
-			_, err = github.NewOIDCClient()
-			check(err)
-
 			/*
 				audience := regexp.MustCompile(`^(https?://)?github\.com/?`).ReplaceAllString("https://github.com/slsa-framework/slsa-github-generator@v1", "")
 				_, err = c.Token(ctx, []string{audience})
@@ -148,7 +147,7 @@ run in the context of a Github Actions workflow.`,
 				sboms, err := parseSbomInput(sbomFile, sbomUri, sbomSha256)
 				check(err)
 
-				prov, err := createSbomProv(artifactRepo, artifactRepoCommit, attestationGenRepo, attestationGenRepoCommit)
+				prov, err := createSbomMetadata(artifactRepo, artifactRepoCommit, attestationGenRepo, attestationGenRepoCommit)
 				check(err)
 
 				p, err = CustomSbomStatement(parsedSubjects, predicateType, sboms, prov)
@@ -164,12 +163,23 @@ run in the context of a Github Actions workflow.`,
 			}
 			check(err)
 
+			var att signing.Attestation
+
 			if attPath != "" {
-				s := sigstore.NewDefaultSigner()
-				att, err := s.Sign(ctx, p)
+				if local {
+					s := signing.NewDefaultFulcio()
+					att, err = s.Sign(ctx, p)
+				} else {
+					_, err = github.NewOIDCClient()
+					check(err)
+
+					s := sigstore.NewDefaultFulcio()
+					att, err = s.Sign(ctx, p)
+				}
 				check(err)
 
-				_, err = s.Upload(ctx, att)
+				r := sigstore.NewDefaultRekor()
+				_, err = r.Upload(ctx, att)
 				check(err)
 
 				f, err := getFile(attPath)
@@ -190,10 +200,11 @@ run in the context of a Github Actions workflow.`,
 	c.Flags().StringVarP(&sbomFile, "sbom", "b", "", "Path to create SBOM predicate")
 	c.Flags().StringVarP(&sbomSha256, "sbomSha256", "d", "", "Sha256 hash the SBOM")
 	c.Flags().StringVarP(&sbomUri, "sbomUri", "u", "", "SBOM Uri if file not provided")
-	c.Flags().StringVarP(&artifactRepo, "art-repo", "a", "", "Github repository from which the artifact was built")
-	c.Flags().StringVarP(&artifactRepoCommit, "art-repo-commit", "c", "", "Commit of repository from which the artifact was built")
-	c.Flags().StringVarP(&attestationGenRepo, "att-generation-repo", "x", "", "Github repository used to generate the attestation")
-	c.Flags().StringVarP(&attestationGenRepoCommit, "att-generation-repo-commit", "y", "", "Commit of Github repository used to generate the attestation")
+	c.Flags().StringVarP(&artifactRepo, "art-repo", "a", "NoAssertion", "Github repository from which the artifact was built")
+	c.Flags().StringVarP(&artifactRepoCommit, "art-repo-commit", "c", "NoAssertion", "Commit of repository from which the artifact was built")
+	c.Flags().StringVarP(&attestationGenRepo, "att-generation-repo", "x", "NoAssertion", "Github repository used to generate the attestation")
+	c.Flags().StringVarP(&attestationGenRepoCommit, "att-generation-repo-commit", "y", "NoAssertion", "Commit of Github repository used to generate the attestation")
+	c.Flags().BoolVarP(&local, "local", "l", false, "Whether attest will run in a GH action or locally")
 
 	return c
 }
@@ -208,6 +219,7 @@ type SbomMetadata struct {
 	ArtifactSourceRepoCommit string `json:"artifact-source-repo-commit"`
 	AttestationGenRepo       string `json:"attestation-generator-repo"`
 	AttestationGenRepoCommit string `json:"attestation-generator-repo-commit"`
+	// Consider adding SPDXID, SBOM name for cases where SBOM content cannot be accessed
 }
 
 // CustomSbomStatement creates an intoto SBOM statement with provided fields
@@ -239,7 +251,7 @@ func CustomIntotoStatement(subjects []intoto.Subject, predicateType string, pred
 	}, nil
 }
 
-func createSbomProv(artifactRepo string, artifactRepoCommit string, attestationGenRepo string, attestationGenRepoCommit string) (SbomMetadata, error) {
+func createSbomMetadata(artifactRepo string, artifactRepoCommit string, attestationGenRepo string, attestationGenRepoCommit string) (SbomMetadata, error) {
 	return SbomMetadata{
 		ArtifactSourceRepo:       artifactRepo,
 		ArtifactSourceRepoCommit: artifactRepoCommit,

@@ -40,14 +40,30 @@ const (
 
 type (
 	step struct {
-		Command []string `json:"command"`
-		Env     []string `json:"env"`
+		Command    []string `json:"command"`
+		Env        []string `json:"env"`
+		WorkingDir string   `json:"workingDir"`
 	}
 	buildConfig struct {
 		Version int    `json:"version"`
 		Steps   []step `json:"steps"`
 	}
 )
+
+type goProvenanceBuild struct {
+	*slsa.GithubActionsBuild
+	buildConfig buildConfig
+}
+
+// URI implements BuildType.URI.
+func (b *goProvenanceBuild) URI() string {
+	return buildType
+}
+
+// BuildConfig implements BuildType.BuildConfig.
+func (b *goProvenanceBuild) BuildConfig(context.Context) (interface{}, error) {
+	return b.buildConfig, nil
+}
 
 // GenerateProvenance translates github context into a SLSA provenance
 // attestation.
@@ -73,39 +89,50 @@ func GenerateProvenance(name, digest, command, envs string) ([]byte, string, err
 		return nil, "", err
 	}
 
-	c, err := github.NewOIDCClient()
-	if err != nil {
-		return nil, "", err
-	}
+	/*
+		c, err := github.NewOIDCClient()
+		if err != nil {
+			return nil, "", err
+		}
+	*/
 
-	// Generate a basic WorkflowRun for our subject based on the github
-	// context.
-	wr := slsa.NewWorkflowRun([]intoto.Subject{
-		{
-			Name: name,
-			Digest: slsa02.DigestSet{
-				"sha256": digest,
-			},
-		},
-	}, gh)
-
-	// Identifies that this is a slsa-framework's slsa-github-generator-go' build.
-	wr.BuildType = buildType
-	// Sets the builder specific build config.
-	wr.BuildConfig = buildConfig{
-		Version: buildConfigVersion,
-		Steps: []step{
-			// Single step.
+	b := goProvenanceBuild{
+		GithubActionsBuild: slsa.NewGithubActionsBuild([]intoto.Subject{
 			{
-				Command: com,
-				Env:     env,
+				Name: name,
+				Digest: slsa02.DigestSet{
+					"sha256": digest,
+				},
+			},
+		}, gh),
+
+		buildConfig: buildConfig{
+			Version: buildConfigVersion,
+			Steps: []step{
+				// Vendoring step.
+				{
+					// Note: vendoring and compilation are
+					// performed in the same VM, so the compiler is
+					// the same.
+					Command:    []string{com[0], "mod", "vendor"},
+					WorkingDir: ".",
+					// Note: No user-defined env set for this step.
+				},
+				// Compilation step.
+				{
+					Command:    com,
+					Env:        env,
+					WorkingDir: ".",
+				},
 			},
 		},
 	}
+
+	g := slsa.NewHostedActionsGenerator(&b)
 
 	// Generate the provenance.
 	ctx := context.Background()
-	p, err := slsa.HostedActionsProvenance(ctx, wr, c)
+	p, err := g.Generate(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -128,7 +155,7 @@ func GenerateProvenance(name, digest, command, envs string) ([]byte, string, err
 	p.Predicate.Materials = append(p.Predicate.Materials, runnerMaterials)
 
 	// Sign the provenance.
-	s := sigstore.NewDefaultSigner()
+	s := sigstore.NewDefaultFulcio()
 	att, err := s.Sign(ctx, &intoto.Statement{
 		StatementHeader: p.StatementHeader,
 		Predicate:       p.Predicate,
@@ -137,16 +164,20 @@ func GenerateProvenance(name, digest, command, envs string) ([]byte, string, err
 		return nil, "", err
 	}
 
-	// Upload the signed attestation to recor.
-	logEntry, err := s.Upload(ctx, att)
+	// Upload the signed attestation to rekor.
+	r := sigstore.NewDefaultRekor()
+	logEntry, err := r.Upload(ctx, att)
 	if err != nil {
 		return nil, "", err
 	}
 
-	if logEntry.LogIndex == nil || logEntry.LogID == nil {
-		return nil, "", fmt.Errorf("logEntry fields not present for tlog upload")
-	}
-	logRef := fmt.Sprintf("index:%d, logID:%s", *logEntry.LogIndex, *logEntry.LogID)
+	// comment out because slsa-framework/slsa-github-generator does not include this
+	/*
+		if logEntry.LogIndex == nil || logEntry.ID == nil {
+			return nil, "", fmt.Errorf("logEntry fields not present for tlog upload")
+		}
+	*/
+	logRef := fmt.Sprintf("index:%d, logID:%s", logEntry.LogIndex(), logEntry.ID())
 
 	return att.Bytes(), logRef, nil
 
