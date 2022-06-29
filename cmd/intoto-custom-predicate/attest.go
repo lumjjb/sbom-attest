@@ -147,10 +147,10 @@ the context of a Github Actions workflow unless the --local flag is provided.`,
 				sboms, err := parseSbomInput(sbomFile, sbomUri, sbomSha256)
 				check(err)
 
-				prov, err := createSbomMetadata(artifactRepo, artifactRepoCommit, attestationGenRepo, attestationGenRepoCommit)
+				metadata, err := createSbomMetadata(artifactRepo, artifactRepoCommit, attestationGenRepo, attestationGenRepoCommit)
 				check(err)
 
-				p, err = CustomSbomStatement(parsedSubjects, predicateType, sboms, prov)
+				p, err = CustomSbomStatement(parsedSubjects, predicateType, sboms, metadata)
 			} else {
 				predicateBytes, err := os.ReadFile(predicateFile)
 				check(err)
