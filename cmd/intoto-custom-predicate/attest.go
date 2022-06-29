@@ -30,6 +30,7 @@ import (
 	slsav02 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/spf13/cobra"
 
+	"github.com/slsa-framework/slsa-github-generator-go/pkg/signing"
 	"github.com/slsa-framework/slsa-github-generator/github"
 	"github.com/slsa-framework/slsa-github-generator/signing/sigstore"
 )
@@ -99,21 +100,26 @@ func getFile(path string) (io.Writer, error) {
 // attestCmd returns the 'attest' command.
 func attestCmd() *cobra.Command {
 	var (
-		attPath       string
-		subjects      string
-		predicateFile string
-		predicateType string
-		sbomFile      string
-		sbomSha256    string
-		sbomUri       string
+		attPath                  string
+		subjects                 string
+		predicateFile            string
+		predicateType            string
+		sbomFile                 string
+		sbomSha256               string
+		sbomUri                  string
+		artifactRepo             string
+		artifactRepoCommit       string
+		attestationGenRepo       string
+		attestationGenRepoCommit string
+		local                    bool
 	)
 
 	c := &cobra.Command{
 		Use:   "attest",
-		Short: "Create a signed SLSA attestation from a Github Action",
-		Long: `Generate and sign SLSA provenance from a Github Action to form an attestation
-and upload to a Rekor transparency log. This command assumes that it is being
-run in the context of a Github Actions workflow.`,
+		Short: "Create and upload a signed SLSA attestation",
+		Long: `Generate and sign SLSA provenance to form an attestation and upload to a 
+Rekor transparency log. This command assumes that it is being run in 
+the context of a Github Actions workflow unless the --local flag is provided.`,
 
 		Run: func(cmd *cobra.Command, args []string) {
 			/*
@@ -130,9 +136,6 @@ run in the context of a Github Actions workflow.`,
 
 			ctx := context.Background()
 
-			_, err = github.NewOIDCClient()
-			check(err)
-
 			/*
 				audience := regexp.MustCompile(`^(https?://)?github\.com/?`).ReplaceAllString("https://github.com/slsa-framework/slsa-github-generator@v1", "")
 				_, err = c.Token(ctx, []string{audience})
@@ -144,7 +147,10 @@ run in the context of a Github Actions workflow.`,
 				sboms, err := parseSbomInput(sbomFile, sbomUri, sbomSha256)
 				check(err)
 
-				p, err = CustomSbomStatement(parsedSubjects, predicateType, sboms)
+				metadata, err := createSbomMetadata(artifactRepo, artifactRepoCommit, attestationGenRepo, attestationGenRepoCommit)
+				check(err)
+
+				p, err = CustomSbomStatement(parsedSubjects, predicateType, sboms, metadata)
 			} else {
 				predicateBytes, err := os.ReadFile(predicateFile)
 				check(err)
@@ -157,12 +163,23 @@ run in the context of a Github Actions workflow.`,
 			}
 			check(err)
 
+			var att signing.Attestation
+
 			if attPath != "" {
-				s := sigstore.NewDefaultSigner()
-				att, err := s.Sign(ctx, p)
+				if local {
+					s := signing.NewDefaultFulcio()
+					att, err = s.Sign(ctx, p)
+				} else {
+					_, err = github.NewOIDCClient()
+					check(err)
+
+					s := sigstore.NewDefaultFulcio()
+					att, err = s.Sign(ctx, p)
+				}
 				check(err)
 
-				_, err = s.Upload(ctx, att)
+				r := sigstore.NewDefaultRekor()
+				_, err = r.Upload(ctx, att)
 				check(err)
 
 				f, err := getFile(attPath)
@@ -175,25 +192,39 @@ run in the context of a Github Actions workflow.`,
 		},
 	}
 
-	c.Flags().StringVarP(&attPath, "signature", "g", "attestation.intoto.jsonl", "Path to write the signed attestation.")
-	c.Flags().StringVarP(&subjects, "subjects", "s", "", "Formatted list of subjects in the same format as sha256sum.")
-	c.Flags().StringVarP(&predicateType, "predicateType", "t", "", "Predicate type for intoto statement header.")
+	c.Flags().StringVarP(&attPath, "signature", "g", "attestation.intoto.jsonl", "Path to write the signed attestation")
+	c.Flags().StringVarP(&subjects, "subjects", "s", "", "Formatted list of subjects in the same format as sha256sum")
+	c.Flags().StringVarP(&predicateType, "predicateType", "t", "", "Predicate type for intoto statement header")
 	c.Flags().StringVarP(&predicateFile, "predicateFile", "f", "predicate.json", "Path to retrieve custom predicate to create attestation from")
 	// Pass in SBOM file OR the sha256 and the sbomURI
 	c.Flags().StringVarP(&sbomFile, "sbom", "b", "", "Path to create SBOM predicate")
 	c.Flags().StringVarP(&sbomSha256, "sbomSha256", "d", "", "Sha256 hash the SBOM")
 	c.Flags().StringVarP(&sbomUri, "sbomUri", "u", "", "SBOM Uri if file not provided")
+	c.Flags().StringVarP(&artifactRepo, "art-repo", "a", "NoAssertion", "Github repository from which the artifact was built")
+	c.Flags().StringVarP(&artifactRepoCommit, "art-repo-commit", "c", "NoAssertion", "Commit of repository from which the artifact was built")
+	c.Flags().StringVarP(&attestationGenRepo, "att-generation-repo", "x", "NoAssertion", "Github repository used to generate the attestation")
+	c.Flags().StringVarP(&attestationGenRepoCommit, "att-generation-repo-commit", "y", "NoAssertion", "Commit of Github repository used to generate the attestation")
+	c.Flags().BoolVarP(&local, "local", "l", false, "Whether attest will run in a GH action or locally")
 
 	return c
 }
 
 type SBOMPredicate struct {
-	Sboms []SbomDocument `json:"sboms"`
+	Sboms         []SbomDocument `json:"sboms"`
+	BuildMetadata SbomMetadata   `json:"build-metadata"`
+}
+
+type SbomMetadata struct {
+	ArtifactSourceRepo       string `json:"artifact-source-repo"`
+	ArtifactSourceRepoCommit string `json:"artifact-source-repo-commit"`
+	AttestationGenRepo       string `json:"attestation-generator-repo"`
+	AttestationGenRepoCommit string `json:"attestation-generator-repo-commit"`
+	// Consider adding SPDXID, SBOM name for cases where SBOM content cannot be accessed
 }
 
 // CustomSbomStatement creates an intoto SBOM statement with provided fields
 // Take in SBOM hash, URI,
-func CustomSbomStatement(subjects []intoto.Subject, predicateType string, docs []SbomDocument) (*intoto.Statement, error) {
+func CustomSbomStatement(subjects []intoto.Subject, predicateType string, docs []SbomDocument, metadata SbomMetadata) (*intoto.Statement, error) {
 	return &intoto.Statement{
 		StatementHeader: intoto.StatementHeader{
 			Type:          intoto.StatementInTotoV01,
@@ -201,7 +232,8 @@ func CustomSbomStatement(subjects []intoto.Subject, predicateType string, docs [
 			Subject:       subjects,
 		},
 		Predicate: SBOMPredicate{
-			Sboms: docs,
+			Sboms:         docs,
+			BuildMetadata: metadata,
 		},
 	}, nil
 }
@@ -216,6 +248,15 @@ func CustomIntotoStatement(subjects []intoto.Subject, predicateType string, pred
 			Subject:       subjects,
 		},
 		Predicate: predicate,
+	}, nil
+}
+
+func createSbomMetadata(artifactRepo string, artifactRepoCommit string, attestationGenRepo string, attestationGenRepoCommit string) (SbomMetadata, error) {
+	return SbomMetadata{
+		ArtifactSourceRepo:       artifactRepo,
+		ArtifactSourceRepoCommit: artifactRepoCommit,
+		AttestationGenRepo:       attestationGenRepo,
+		AttestationGenRepoCommit: attestationGenRepoCommit,
 	}, nil
 }
 

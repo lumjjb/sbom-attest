@@ -347,7 +347,7 @@ jobs:
 
 
           echo "go install"
-          go install --mod=mod sigs.k8s.io/bom/cmd/bom@main
+          go install --mod=mod sigs.k8s.io/bom/cmd/bom@5cfc466ecf53e375d107c12efe0a13181334b0b9
           echo "bom gen"
           bom generate -n "http://www.example.com/${{ env.GENERATED_SPDX_NAME }}" -o "${{ env.GENERATED_SPDX_NAME }}" .
           echo "::set-output name=sbom-name::${{ env.GENERATED_SPDX_NAME }}"
@@ -511,7 +511,7 @@ jobs:
       contents: write
       id-token: write # Needed for keyless.
     runs-on: ubuntu-latest
-    needs: [build,build-dry,provenance,builder]
+    needs: [build,build-dry,provenance,builder,detect-env]
     if: inputs.upload-assets == true
     steps:
       # Verify binary hash.
@@ -600,6 +600,8 @@ jobs:
           BUILDER_BINARY: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
           GITHUB_CONTEXT: "${{ toJSON(github) }}"
           SBOM_HASH: "${{ needs.build.outputs.sbom-sha256 }}"
+          WORKFLOW_REPO: "${{ needs.detect-env.outputs.builder_repo }}"
+          WORKFLOW_REF: "${{ needs.detect-env.outputs.builder_ref }}"
         run: |
           set -euo pipefail
 
@@ -612,5 +614,4 @@ jobs:
 
           # Create and sign provenance
           # This sets signed-provenance-name to the name of the signed DSSE envelope.
-          ./"$BUILDER_BINARY" attest -t "http://lumjjb/sbom-documents" -s "$UNTRUSTED_BINARY_HASH $UNTRUSTED_BINARY_NAME" -u "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF#refs/tags/}/${{ env.GENERATED_SPDX_NAME }}" -d "$SBOM_HASH"
-
+          ./"$BUILDER_BINARY" attest -a "${{ github.server_url }}/${{ github.repository }}" -c "${{ github.sha }}" -x "${{ github.server_url }}/$WORKFLOW_REPO" -y "$WORKFLOW_REF" -t "http://lumjjb/sbom-documents" -s "$UNTRUSTED_BINARY_HASH $UNTRUSTED_BINARY_NAME" -u "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF#refs/tags/}/${{ env.GENERATED_SPDX_NAME }}" -d "$SBOM_HASH"
