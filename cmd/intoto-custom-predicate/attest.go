@@ -165,23 +165,23 @@ the context of a Github Actions workflow unless the --local flag is provided.`,
 
 			var att signing.Attestation
 
+			if local {
+				s := signing.NewDefaultFulcio()
+				att, err = s.Sign(ctx, p)
+			} else {
+				_, err = github.NewOIDCClient()
+				check(err)
+
+				s := sigstore.NewDefaultFulcio()
+				att, err = s.Sign(ctx, p)
+			}
+			check(err)
+
+			r := sigstore.NewDefaultRekor()
+			_, err = r.Upload(ctx, att)
+			check(err)
+
 			if attPath != "" {
-				if local {
-					s := signing.NewDefaultFulcio()
-					att, err = s.Sign(ctx, p)
-				} else {
-					_, err = github.NewOIDCClient()
-					check(err)
-
-					s := sigstore.NewDefaultFulcio()
-					att, err = s.Sign(ctx, p)
-				}
-				check(err)
-
-				r := sigstore.NewDefaultRekor()
-				_, err = r.Upload(ctx, att)
-				check(err)
-
 				f, err := getFile(attPath)
 				check(err)
 
