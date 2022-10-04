@@ -1,4 +1,4 @@
-module github.com/slsa-framework/slsa-github-generator-go
+module github.com/lumjjb/sbom-attest
 
 go 1.18
 

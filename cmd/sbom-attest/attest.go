@@ -30,7 +30,7 @@ import (
 	slsav02 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/spf13/cobra"
 
-	"github.com/slsa-framework/slsa-github-generator-go/pkg/signing"
+	"github.com/lumjjb/sbom-attest/pkg/signing"
 	"github.com/slsa-framework/slsa-github-generator/github"
 	"github.com/slsa-framework/slsa-github-generator/signing/sigstore"
 )
