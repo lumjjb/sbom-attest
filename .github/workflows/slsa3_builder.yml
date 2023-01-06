@@ -193,7 +193,7 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Download builder
-        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v2.1.0
         with:
           name: "${{ env.BUILDER_BINARY }}"
 
@@ -270,7 +270,7 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Download builder
-        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v2.1.0
         with:
           name: "${{ env.BUILDER_BINARY }}"
 
@@ -406,7 +406,7 @@ jobs:
     needs: [build, build-dry]
     steps:
       - name: Download generated binary
-        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v2.1.0
         with:
           name: "${{ env.GENERATED_BINARY_NAME }}"
 
@@ -451,7 +451,7 @@ jobs:
       go-provenance-sha256: ${{ steps.sign-prov.outputs.signed-provenance-sha256 }}
     steps:
       - name: Download builder
-        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v2.1.0
         with:
           name: "${{ env.BUILDER_BINARY }}"
 
@@ -515,7 +515,7 @@ jobs:
     if: inputs.upload-assets == true
     steps:
       # Verify binary hash.
-      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: ${{ needs.build-dry.outputs.go-binary-name }}
       - name: Verify binary hash
@@ -534,7 +534,7 @@ jobs:
           echo "$UNTRUSTED_BINARY_HASH $UNTRUSTED_BINARY_NAME" | sha256sum --strict --check --status || exit -2
 
       # Verify provenance hash.
-      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: ${{ needs.provenance.outputs.go-provenance-name }}
       - name: Verify provenance hash
@@ -553,7 +553,7 @@ jobs:
           echo "$UNTRUSTED_PROVENANCE_HASH $UNTRUSTED_PROVENANCE_NAME" | sha256sum --strict --check --status || exit -2
 
       # Download SBOM
-      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: ${{ env.GENERATED_SPDX_NAME }}
 
@@ -566,7 +566,7 @@ jobs:
             ${{ env.GENERATED_SPDX_NAME }}
 
       - name: Download builder custom pred
-        uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # v2.1.0
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v2.1.0
         with:
           name: "${{ env.BUILDER_CUSTOM_PRED_BINARY }}"
 
