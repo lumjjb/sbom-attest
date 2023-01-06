@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2.3.4
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2.3.4
 
       - name: setup-go
         uses: actions/setup-go@f6164bd8c8acb4a71fb2791a8b6c4024ff038dab # v2.2.0
